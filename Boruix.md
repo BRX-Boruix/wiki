@@ -29,6 +29,10 @@ Boruix 名字来自于杨博睿的姓名，标志灵感来源则为杨博睿在2
 
 
 
+（https://github.com/BRX-Boruix/OS）
+
+
+
 \### 项目第一次重启：boruixkernel
 
 
