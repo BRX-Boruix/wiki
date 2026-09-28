@@ -1,6 +1,6 @@
 # wiki
 
-BORUIX 的**用户文档**：面向使用这个系统的人，涵盖安装、使用、教程与项目历史。
+BORUIX 的**文档站**：面向使用者的教程与手册，以及面向维护者的各仓库实现说明。
 
 [English](README.en.md)
 
@@ -9,6 +9,7 @@ BORUIX 的**用户文档**：面向使用这个系统的人，涵盖安装、使
 | 路径 | 内容 | 状态 |
 | --- | --- | --- |
 | [`tutorial/`](tutorial/) | 入门教程 | 已有 |
+| [`contributor/`](contributor/) | 各仓库的实现说明 | 已有 |
 | [`Boruix.md`](Boruix.md) | 项目历史 | 未完成 |
 | `install/` | 安装指南 | 待补 |
 | `usage/` | 使用手册：命令、shell、配置 | 待补 |
@@ -34,6 +35,17 @@ BORUIX 的**用户文档**：面向使用这个系统的人，涵盖安装、使
 
 > 已经是编译好的驱动就只看第 1 章；要从零写一个，再从第 2 章开始。
 
+## 各仓库的实现说明
+
+[`contributor/`](contributor/) 收录各个仓库的**实现层说明**——设计取舍、约束、踩过的坑。这些内容
+对阅读或修改对应代码的人是必要的，但不适合放在仓库自己的 README 里。
+
+| 文件 | 仓库 |
+| --- | --- |
+| [`contributor/libsys.md`](contributor/libsys.md) | 用户态系统调用库 |
+| [`contributor/libline.md`](contributor/libline.md) | 行编辑库 |
+| [`contributor/login.md`](contributor/login.md) | 登录认证程序 |
+
 ## 项目历史
 
 [`Boruix.md`](Boruix.md) 记录这个项目的来龙去脉——几代版本的更替、每一代为什么结束、留下了什么。
@@ -42,7 +54,7 @@ BORUIX 的**用户文档**：面向使用这个系统的人，涵盖安装、使
 
 ## 关于本仓库
 
-这里的文档面向**使用系统的人**。涉及内部实现的设计文档另在别处，不在此仓库。
+这里的文档分两类：面向**使用者**的教程与手册，以及面向**维护者**的各仓库实现说明（[`contributor/`](contributor/)）。
 
 ## 许可
 

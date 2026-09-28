@@ -1,6 +1,6 @@
 # wiki
 
-BORUIX's **user documentation**: for people who use this system, covering installation, usage, tutorials, and project history.
+BORUIX's **documentation site**: tutorials and manuals for users, and per-repository implementation notes for maintainers.
 
 [简体中文](README.md)
 
@@ -9,6 +9,7 @@ BORUIX's **user documentation**: for people who use this system, covering instal
 | Path | Contents | Status |
 | --- | --- | --- |
 | [`tutorial/`](tutorial/) | Getting-started tutorials | Available |
+| [`contributor/`](contributor/) | Implementation notes per repository | Available |
 | [`Boruix.md`](Boruix.md) | Project history | Unfinished |
 | `install/` | Installation guide | Planned |
 | `usage/` | User manual: commands, the shell, configuration | Planned |
@@ -33,6 +34,16 @@ It starts from a counter-intuitive fact: in BORUIX, **a driver is not a kernel m
 
 > If you already have a compiled driver, section 1 alone is enough; to write one from scratch, start at section 2.
 
+## Implementation notes per repository
+
+[`contributor/`](contributor/) collects the **implementation-level notes** for each repository — design tradeoffs, constraints, and traps that were hit. They matter to anyone reading or modifying that code, but do not belong in the repository's own README.
+
+| File | Repository |
+| --- | --- |
+| [`contributor/libsys.md`](contributor/libsys.md) | The user-space system call library |
+| [`contributor/libline.md`](contributor/libline.md) | The line editing library |
+| [`contributor/login.md`](contributor/login.md) | The login program |
+
 ## Project history
 
 [`Boruix.md`](Boruix.md) records how the project came to be — the generations of versions, why each ended, and what it left behind.
@@ -41,7 +52,7 @@ It starts from a counter-intuitive fact: in BORUIX, **a driver is not a kernel m
 
 ## About this repository
 
-The documentation here is for **people who use the system**. Design documents covering internal implementation live elsewhere, not in this repository.
+The documentation here comes in two kinds: tutorials and manuals for **users**, and per-repository implementation notes for **maintainers** ([`contributor/`](contributor/)).
 
 ## License
 
