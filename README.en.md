@@ -38,8 +38,9 @@ It starts from a counter-intuitive fact: in BORUIX, **a driver is not a kernel m
 
 [`contributor/`](contributor/) collects the **implementation-level notes** for each repository — design tradeoffs, constraints, and traps that were hit. They matter to anyone reading or modifying that code, but do not belong in the repository's own README.
 
-| File | Repository |
+| File | Contents |
 | --- | --- |
+| [`contributor/readme.md`](contributor/readme.md) | **README standard** — conventions and content boundaries (Chinese only) |
 | [`contributor/libsys.md`](contributor/libsys.md) | The user-space system call library |
 | [`contributor/libline.md`](contributor/libline.md) | The line editing library |
 | [`contributor/login.md`](contributor/login.md) | The login program |

@@ -40,8 +40,9 @@ BORUIX 的**文档站**：面向使用者的教程与手册，以及面向维护
 [`contributor/`](contributor/) 收录各个仓库的**实现层说明**——设计取舍、约束、踩过的坑。这些内容
 对阅读或修改对应代码的人是必要的，但不适合放在仓库自己的 README 里。
 
-| 文件 | 仓库 |
+| 文件 | 内容 |
 | --- | --- |
+| [`contributor/readme.md`](contributor/readme.md) | **README 规约**——写法和内容边界 |
 | [`contributor/libsys.md`](contributor/libsys.md) | 用户态系统调用库 |
 | [`contributor/libline.md`](contributor/libline.md) | 行编辑库 |
 | [`contributor/login.md`](contributor/login.md) | 登录认证程序 |
