@@ -28,13 +28,41 @@ The tutorial has two parts:
 ## Implementation notes per repository
 
 [`contributor/`](contributor/) collects implementation-level content per repository: design tradeoffs,
-constraints, and the conventions to know when modifying that code. The README standard is
-[`contributor/readme.md`](contributor/readme.md).
+constraints, and the conventions to know when modifying that code. One file per repository; the README
+standard is [`contributor/readme.md`](contributor/readme.md).
 
-- [`contributor/readme.md`](contributor/readme.md) — the README standard
-- [`contributor/libsys.md`](contributor/libsys.md) — the user-space system call library
-- [`contributor/libline.md`](contributor/libline.md) — the line editing library
-- [`contributor/login.md`](contributor/login.md) — the login program
+Daemons and system services:
+
+- [`audiod`](contributor/audiod.md) — audio mixing
+- [`consoled`](contributor/consoled.md) — keyboard events to console bytes
+- [`driverd`](contributor/driverd.md) — automatic driver loading
+- [`userd`](contributor/userd.md) — account and home-directory sync
+- [`volumed`](contributor/volumed.md) — volume mounting and removal
+
+Acceptance and test programs:
+
+- [`acee2e`](contributor/acee2e.md) — the syscall chain of access-control rules
+- [`audioe2e`](contributor/audioe2e.md) — the audio blocking wake round trip
+- [`blkdemo`](contributor/blkdemo.md) — control diagnostics for the legacy byte path
+- [`consoled-e2e`](contributor/consoled-e2e.md) — console ring blocking wake
+- [`evdemo`](contributor/evdemo.md) — the diagnostic form of the event stream
+- [`evsrcdemo`](contributor/evsrcdemo.md) — the event source component
+- [`focusdemo`](contributor/focusdemo.md) — adversarial acceptance of the focus gate
+- [`fpcheck`](contributor/fpcheck.md) — floating-point path observation
+- [`pwde2e`](contributor/pwde2e.md) — the account look-up chain
+- [`selftest`](contributor/selftest.md) — the on-demand self-test host
+- [`spinburn`](contributor/spinburn.md) — the kill-stress target process
+- [`synce2e`](contributor/synce2e.md) — the sync word blocking round trip
+- [`threaddemo`](contributor/threaddemo.md) — threads and thread-local storage
+- [`tokendemo`](contributor/tokendemo.md) — console token truth
+- [`trave2e`](contributor/trave2e.md) — directory traversal permission
+- [`yielder`](contributor/yielder.md) — busy-yield stress
+
+Libraries and system programs:
+
+- [`libline`](contributor/libline.md) — the line editing library
+- [`libsys`](contributor/libsys.md) — the user-space system call library
+- [`login`](contributor/login.md) — login authentication
 
 ## Project history
 
