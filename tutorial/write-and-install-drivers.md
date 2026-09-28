@@ -120,9 +120,9 @@
 
 ## 3. 把自己的驱动打进系统镜像
 
-自己写的驱动要被「安装」，需先作为 liveCD 里的一个程序存在。参照 sdk/sdk_build/build.py 里 userdrv 的登记方式，把你的 ELF 加进 programs 列表、payloads 和 systemdisk 元组，然后重建镜像：
+自己写的驱动要被「安装」，需先作为 liveCD 里的一个程序存在。参照 tools/tools_build/build.py 里 userdrv 的登记方式，把你的 ELF 加进 programs 列表、payloads 和 systemdisk 元组，然后重建镜像：
 
-    python main.py build   # 在 sdk 目录下
+    python main.py build   # 在 tools 目录下
 
 构建完成后，新 ISO 里就有 /programs/<你的驱动>.elf，之后就能 driver install 安装了。
 
