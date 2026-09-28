@@ -1,19 +1,14 @@
 # wiki
 
-BORUIX's **documentation site**: tutorials and manuals for users, and per-repository implementation notes for maintainers.
+BORUIX's documentation site, containing tutorials and manuals for users and per-repository implementation notes for maintainers.
 
 [简体中文](README.md)
 
 ## Contents
 
-| Path | Contents | Status |
-| --- | --- | --- |
-| [`tutorial/`](tutorial/) | Getting-started tutorials | Available |
-| [`contributor/`](contributor/) | Implementation notes per repository | Available |
-| [`Boruix.md`](Boruix.md) | Project history | Unfinished |
-| `install/` | Installation guide | Planned |
-| `usage/` | User manual: commands, the shell, configuration | Planned |
-| `faq/` | Frequently asked questions | Planned |
+- [`tutorial/`](tutorial/) — getting-started tutorials
+- [`contributor/`](contributor/) — implementation notes per repository
+- [`Boruix.md`](Boruix.md) — project history
 
 ## Tutorials
 
@@ -21,39 +16,25 @@ BORUIX's **documentation site**: tutorials and manuals for users, and per-reposi
 
 How to add support for a new piece of hardware.
 
-It starts from a counter-intuitive fact: in BORUIX, **a driver is not a kernel module but an ordinary user-space program**. Installing one means placing a file in the system's driver directory and declaring which device it binds to, with **no rebuild of the system itself**.
+A driver is not a kernel module but an ordinary user-space program. Installing one means placing a file in the system's driver directory and declaring which device it binds to, with no rebuild of the system itself.
 
-| Section | Contents |
-| --- | --- |
-| 0 | What a driver actually is in BORUIX |
-| 1 | Quickly installing an existing driver (no compiling) |
-| 2 | Writing a driver yourself |
-| 3 | Building your driver into the system image |
-| 4 | The complete flow at a glance (write → build → install → verify) |
-| 5 | Common questions |
+The tutorial has two parts:
 
-> If you already have a compiled driver, section 1 alone is enough; to write one from scratch, start at section 2.
+- Section 1: installing a compiled driver, without touching a compiler
+- Sections 2 to 5: writing a driver yourself, from its structure to packaging it into the system image
 
 ## Implementation notes per repository
 
-[`contributor/`](contributor/) collects the **implementation-level notes** for each repository — design tradeoffs, constraints, and traps that were hit. They matter to anyone reading or modifying that code, but do not belong in the repository's own README.
+[`contributor/`](contributor/) collects the implementation-level notes for each repository: design tradeoffs, constraints, and the conventions to know when modifying that code.
 
-| File | Contents |
-| --- | --- |
-| [`contributor/readme.md`](contributor/readme.md) | **README standard** — conventions and content boundaries (Chinese only) |
-| [`contributor/libsys.md`](contributor/libsys.md) | The user-space system call library |
-| [`contributor/libline.md`](contributor/libline.md) | The line editing library |
-| [`contributor/login.md`](contributor/login.md) | The login program |
+- [`contributor/readme.md`](contributor/readme.md) — the README standard (Chinese only)
+- [`contributor/libsys.md`](contributor/libsys.md) — the user-space system call library
+- [`contributor/libline.md`](contributor/libline.md) — the line editing library
+- [`contributor/login.md`](contributor/login.md) — the login program
 
 ## Project history
 
-[`Boruix.md`](Boruix.md) records how the project came to be — the generations of versions, why each ended, and what it left behind.
-
-> That document is **unfinished**; its last section has a heading only.
-
-## About this repository
-
-The documentation here comes in two kinds: tutorials and manuals for **users**, and per-repository implementation notes for **maintainers** ([`contributor/`](contributor/)).
+[`Boruix.md`](Boruix.md) records how the project came to be, including the generations of versions and their outcomes.
 
 ## License
 
