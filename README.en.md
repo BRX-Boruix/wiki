@@ -31,17 +31,42 @@ The tutorial has two parts:
 constraints, and the conventions to know when modifying that code. One file per repository; the README
 standard is [`contributor/readme.md`](contributor/readme.md).
 
-Daemons and system services:
+### Daemons and system services
 
 - [`audiod`](contributor/audiod.md) — audio mixing
 - [`consoled`](contributor/consoled.md) — keyboard events to console bytes
 - [`driverd`](contributor/driverd.md) — automatic driver loading
+- [`init`](contributor/init.md) — the init process
 - [`userd`](contributor/userd.md) — account and home-directory sync
 - [`volumed`](contributor/volumed.md) — volume mounting and removal
 
-Acceptance and test programs:
+### Drivers
+
+- [`intel-hda`](contributor/intel-hda.md) — the audio hardware driver
+- [`userdrv`](contributor/userdrv.md) — the user-space driver template
+
+### The command interpreter
+
+- [`shell`](contributor/shell.md) — the user shell
+
+### Libraries
+
+- [`libc`](contributor/libc.md) — the C standard library
+- [`libline`](contributor/libline.md) — the line editing library
+- [`libsys`](contributor/libsys.md) — the user-space system call library
+- [`csrc`](contributor/csrc.md) — the freestanding C runtime
+
+### Tools and planned repositories
+
+- [`tools`](contributor/tools.md) — system build and acceptance
+- [`openvt`](contributor/openvt.md) — new terminals at run time
+- [`coreutils`](contributor/coreutils.md) — base commands (planned)
+- [`sdk`](contributor/sdk.md) — third-party development toolchain (planned)
+
+### Applications and acceptance test programs
 
 - [`acee2e`](contributor/acee2e.md) — the syscall chain of access-control rules
+- [`audiofile`](contributor/audiofile.md) — the WAV player
 - [`audioe2e`](contributor/audioe2e.md) — the audio blocking wake round trip
 - [`blkdemo`](contributor/blkdemo.md) — control diagnostics for the legacy byte path
 - [`consoled-e2e`](contributor/consoled-e2e.md) — console ring blocking wake
@@ -57,12 +82,8 @@ Acceptance and test programs:
 - [`tokendemo`](contributor/tokendemo.md) — console token truth
 - [`trave2e`](contributor/trave2e.md) — directory traversal permission
 - [`yielder`](contributor/yielder.md) — busy-yield stress
-
-Libraries and system programs:
-
-- [`libline`](contributor/libline.md) — the line editing library
-- [`libsys`](contributor/libsys.md) — the user-space system call library
 - [`login`](contributor/login.md) — login authentication
+- [`cowsay`](contributor/cowsay.md) — the third-party program sample
 
 ## Project history
 

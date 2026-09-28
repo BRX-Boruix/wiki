@@ -29,17 +29,42 @@ BORUIX 的文档站，收录面向公众的使用说明，以及面向维护者�
 [`contributor/`](contributor/) 按仓库收录实现层的内容：设计取舍、约束，以及修改对应代码时需要
 知道的约定。每个仓库一份；README 规约见 [`contributor/readme.md`](contributor/readme.md)。
 
-守护进程与系统服务：
+### 守护进程与系统服务
 
 - [`audiod`](contributor/audiod.md) —— 音频混音
 - [`consoled`](contributor/consoled.md) —— 键盘事件到控制台字节
 - [`driverd`](contributor/driverd.md) —— 驱动自动装载
+- [`init`](contributor/init.md) —— 系统初始化进程
 - [`userd`](contributor/userd.md) —— 账户与家目录同步
 - [`volumed`](contributor/volumed.md) —— 卷的挂载与拔除
 
-验收与测试程序：
+### 驱动
+
+- [`intel-hda`](contributor/intel-hda.md) —— 音频硬件驱动
+- [`userdrv`](contributor/userdrv.md) —— 用户态驱动模板
+
+### 命令解释器
+
+- [`shell`](contributor/shell.md) —— 用户 shell
+
+### 库
+
+- [`libc`](contributor/libc.md) —— C 标准库
+- [`libline`](contributor/libline.md) —— 行编辑库
+- [`libsys`](contributor/libsys.md) —— 用户态系统调用库
+- [`csrc`](contributor/csrc.md) —— 独立式 C 运行环境
+
+### 工具与规划仓库
+
+- [`tools`](contributor/tools.md) —— 系统构建与验收
+- [`openvt`](contributor/openvt.md) —— 运行期开新终端
+- [`coreutils`](contributor/coreutils.md) —— 基础命令集（规划中）
+- [`sdk`](contributor/sdk.md) —— 第三方开发工具集（规划中）
+
+### 应用与验收测试程序
 
 - [`acee2e`](contributor/acee2e.md) —— 访问控制规则的系统调用链路
+- [`audiofile`](contributor/audiofile.md) —— WAV 播放器
 - [`audioe2e`](contributor/audioe2e.md) —— 音频阻塞唤醒往返
 - [`blkdemo`](contributor/blkdemo.md) —— 旧字节路径的对照诊断
 - [`consoled-e2e`](contributor/consoled-e2e.md) —— 控制台环阻塞唤醒
@@ -55,12 +80,8 @@ BORUIX 的文档站，收录面向公众的使用说明，以及面向维护者�
 - [`tokendemo`](contributor/tokendemo.md) —— 控制台令牌真值
 - [`trave2e`](contributor/trave2e.md) —— 目录遍历权限
 - [`yielder`](contributor/yielder.md) —— 忙让出压测
-
-库与系统程序：
-
-- [`libline`](contributor/libline.md) —— 行编辑库
-- [`libsys`](contributor/libsys.md) —— 用户态系统调用库
 - [`login`](contributor/login.md) —— 登录认证
+- [`cowsay`](contributor/cowsay.md) —— 第三方程序样例
 
 ## 项目历史
 
