@@ -432,3 +432,62 @@ M4–M7 一直传 `max_revision = 0`，于是声明 6 的内核（BORUIX/modtest
 工具链改动：`tools/mkiso.py` 新增可重复的 `--extra ISO/PATH=HOST_FILE`
 （单层目录，确定性布局；无 `--extra` 时输出与旧版逐字节相同）；
 `tools/modtest/{main.rs,linker.ld,build.ps1}` 为消费者内核与其构建。
+## M9 的验证方式
+
+M9 让 liftoff 能引导**真实安装盘**：MBR 分区 → 分区内 EXT2 → 读内核 ELF →
+完整交接（EBS/协议/页表/跳转），内核据此进入**安装模式**并把同一分区挂为根。
+
+验收对象是项目自产的系统盘（`python tools/main.py build --systemdisk`）：
+
+```
+MBR: sig 0xAA55, disk_id 0x424f5255 ("BORU"), part1 status=0x80 type=0x83
+     start_lba=2048 sectors=129024      ← 1MiB 偏移的 63MiB 分区
+EXT2: 1KiB 块, 标签 BORUIX_SYS, /boot/kernel = 24,629,664 B ELF, /programs/*
+```
+
+liftoff 侧实现（`src/main.rs` M2c/M9 段 + `src/ext2.rs`）：
+
+- **挂载顺序**：先试"整盘即文件系统"（M2c fixture 无 MBR 的口径，既有契约行
+  逐字不变），失败再解析 MBR —— 签名 0xAA55 → 磁盘签名（offset 0x1B8）→
+  选分区（活动分区 0x80 优先，否则首个非空项）→ `mount_at(part_lba × 512)`；
+- **EXT2 读器两处扩展**：`Volume.base`（分区字节偏移，`mount`/`mount_at` 两个
+  入口）与**二级间接块**（直块 12 + 单级 256 + 二级 256²，配 `MapCache` 缓存
+  间接表——24.6MB/1KiB 块是 24576 次映射，无缓存会多出数万次 BlockIo）；
+- **大文件读取路径**：内核直接读进 EfiLoaderData 常驻页（不再是 12KiB 栈缓冲），
+  该区即 `File.base` 最终位置，省掉二次拷贝；
+- **BootSource 参数化**：`File.media_type` / `partition_index` / `mbr_disk_id` 由
+  启动来源决定（ISO → optical/0/0；磁盘 → generic/1-based 分区/MBR 签名）；
+- **内核路径**：`/boot/kernel`（规范安装布局，与 `tools/limine.conf` 的
+  `kernel_path: boot():/boot/kernel` 一致）优先，其次 `BOOT/KERNIMG.BIN`
+  （M2c fixture），两者皆无则报 `M2C: open failed status=0x…`。
+
+验收（`tools/boottest.ps1 -Variant ext-boot`，11 锚）：
+
+```
+[m2c] mbr disk_id=0x424f5255 partition=1 start_lba=2048   ← MBR/分区选择
+M2C: mount ok                                             ← 分区内 EXT2 挂载
+[m9] kernel path=/boot/kernel size=24629664               ← 二级间接读 24.6MB
+M3: segs=3 entry=…                                        ← ELF 装载
+Hello, BORUIX! / Kernel M0 is running.                    ← 交接后跳转成功
+[mm] HHDM offset: 0xffff800000000000 / [acpi] RSDP rev=2
+[boot] install mode detected: boot disk mbr_disk_id=0x424f5255 partition_index=1
+partition lba=2048 (EXT2)                                 ← 内核按我方 BootSource 挂根
+LazyBuddy init done
+```
+
+**红态与排障（每步都有实测证据）**：
+
+1. 首次实现后 `M2C: open failed status=0x8000000000000002`（EFI_INVALID_PARAMETER）——
+   我最初把失败状态写死成 EFI_NOT_FOUND，掩盖了真实错误；改为透传真错后才定位；
+2. 在 `UefiBlock::read_at` 加一次性诊断，打出失败读参数：
+   `off=0x3c09d7d880 block=503639020 last_block=131071` —— 偏移是垃圾；
+3. 根因：`read_inode` 的 **GDT 偏移与 inode 表偏移没有加分区 `base`**
+   （我只补了超级块与 `read_block`），于是从盘首读 GDT 得到垃圾 inode 表号，
+   再据此算出天文数字的 inode 偏移。补 `self.base` 后一次通过；
+4. 顺带给 `read_at` 加越界保护（`block > last_block` 时返回内部码 0x13，不再
+   让 `span_blocks` 归零触发 `allocate_pool(0)`）。
+
+工程注记：真实内核 24.6MB（带符号表）在 TCG 下从 EXT2 读完 + 装载 + 重定位需要
+数分钟，`ext-boot` 变体超时设为 600s（其余变体 400s）；内核在该盘上还会继续走到
+`[kmain] booting user init (PID 1) …`（盘内 `/programs` 有程序），但用户态启动
+时长不稳定，故**不把 init 上线列为断言**，避免用例抖动。
