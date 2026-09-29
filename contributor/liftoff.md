@@ -326,3 +326,56 @@ fb_struct.address 是 HHDM 虚地址，误作物理曾产出 base=0xffff80008000
 - `[acpi] RSDP rev=2`（M5 配置表 → 拷贝 → HHDM 全链）
 - `LazyBuddy init done`（memmap 指针数组语义 + 无重叠 usable 的 pmm 全程）
 - 全 12 变体回归全绿
+## M6 的验证方式
+
+M6 让 liftoff 具备真正的 SMP 能力：MADT 枚举 → AP trampoline（实模式→长模式）→
+INIT-SIPI → AP 停泊轮询 `goto_address` → 内核原子写入即跳 `ap_entry`。
+验收锚：`[smp] AP online, lapic_id=1`（`-smp 2` 下真实双核）。
+
+交接面（`src/smp.rs`）：
+
+- MADT：RSDP→XSDT→签名 "APIC"→type 0 条目（flags bit0 enabled）枚举 LAPIC；
+- SmpInfo/SmpResponse：cpu_count 含 BSP（索引 0 = BSP，内核按 lapic_id 跳过）；
+  `cpus` 是指针数组（brxlimine-rs ArrayPtr 语义，与 memmap 同款教训）；
+- AP 资源：trampoline 页固定 0x70000（SIPI 向量 = phys>>12，必须 <1MB；
+  0x1F0000 被 OVMF 的 AP 缓冲覆写——内存 dump 实锤）、64KiB 引导栈、
+  诊断/标记区；全部 EfiLoaderData → 重转 memmap 后为 BootloaderReclaimable，
+  内核不回收（`[0x70000,0x72000)` 在 usable 之外，pmm 日志实证）。
+
+trampoline 三段式（对齐 brxLimine `common/sys/smp_trampoline.asm_x86`）：
+
+1. **16 位 @0**：`cli/cld` → `lgdt [cs:0x1A0]`（**16 位模式必须 disp16**，
+   `disp32` 编码无效——首版 GDTR base/limit 全 0 的实锤）→ PAE → `CR0=PE|ET`
+   → 远跳 0x08 段；
+2. **32 位 @0x40**：数据段 0x10 → `EFER.LME` → `CR3 ← pml4` → `CR0.PG`（**PE 已在
+   段1 置位**；实模式下单独置 PG 非法）→ `push 0x18/push off32/retf` 进 64 位段
+   （兼容模式下 `jmp far` 到 L=1 段非法，#GP 实锤）；
+3. **64 位 @0x80**：写存活标记 → 轮询 `SmpInfo.goto_address`（HHDM 虚地址）→
+   非零则 `rsp=64KiB 栈`、`rdi=&SmpInfo`、`jmp rax`（brxlimine-rs lib.rs 537-543）。
+
+自备 GDT（4 项：null/code32/data/code64）不依赖 OVMF 布局——但 **GDT 占
+0x180..0x1A0，gdtdesc 必须放在 0x1A0 之后**：首版把 gdtdesc 放在 0x198
+直接覆盖 code64 描述符，选择子 0x18 加载 → #GP e=0x18（异常日志实锤）。
+
+IPI 时序（`final_ebs_and_jump`，**必须在切 CR3 之后**）：
+
+- EBS → `switch_cr3`（我们的页表：恒等 + LAPIC + HHDM + 内核高区）→ `start_aps`
+  → `jump_kernel`。trampoline 的 HHDM 轮询依赖我们的页表；且 OVMF 的 EBS 流程
+  会把先前收编的 AP 重新挂起（`-d cpu_reset` 实证 11 次 CPU#1 reset），
+  因此 AP 启动只能在 EBS 之后；
+- LAPIC：SVR(0xF0) bit8 软件使能 + 伪向量 0xFF、TPR(0x80)=0（SDM 10.4.7）；
+- INIT（delivery 5 + level assert + edge，目标 = 该 AP LAPIC id）→ 10ms 级延迟 →
+  SIPI ×2（vector = tramp_phys>>12，SDM Vol3 8.4.4）；
+- 存活判定：AP 进长模式首先写页内标记（+0x300 = 0x5A5A1234），BSP 轮询确认；
+  未上线仅串口告警不阻塞（内核 `wait_all_online` 超时会打印归因）。
+
+调试方法论（本轮全部依赖 QMP 内存/寄存器取证，因 EBS 后串口会静默丢行——
+诊断行写入固定物理页再 QMP `xp` dump；`-d int` 抓 AP 异常现场：
+IP/CR2/错误码逐条定位）。
+
+验收（`tools/boottest.ps1 -Variant boot`，QEMU 追加 `-smp 2`）：
+
+- 8 锚：内核 banner（跳转）、HHDM、RSDP rev=2、LazyBuddy done（memmap）、
+  `[smp] BSP lapic_id=0`、`fired AP lapic_id=1`（响应结构 + 指针数组）、
+  `[smp] AP online, lapic_id=1`（AP 启动全链）；
+- 全 12 变体回归全绿。
