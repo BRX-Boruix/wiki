@@ -491,3 +491,71 @@ LazyBuddy init done
 数分钟，`ext-boot` 变体超时设为 600s（其余变体 400s）；内核在该盘上还会继续走到
 `[kmain] booting user init (PID 1) …`（盘内 `/programs` 有程序），但用户态启动
 时长不稳定，故**不把 init 上线列为断言**，避免用例抖动。
+## M10 的验证方式
+
+M10 把模块交付（M8）扩展到 **EXT2 安装模式**：同一个内核声明同一个
+`ModuleRequest`，liftoff 从**启动介质**（ISO 或 EXT2）装载模块。两条路径共用
+一份装配逻辑与同一份 `config::MODULES` 清单。
+
+实现（`src/modules.rs` + `src/main.rs` + `tools/mkext2.py`）：
+
+- `modules.rs` 重构为**介质无关**：`Assembler` 负责结构页（File 数组 / 指针
+  数组 / 字符串区）与每模块内容页；介质侧只提供两件事——"打开取大小"与
+  "读进缓冲"（`load_from_iso` / `load_from_ext2` 各约 20 行）；
+- `m2c`（EXT2 启动路径）在 ELF 装载成功后按 `boruix::has_request` 判定并调用
+  `load_from_ext2`，与 ISO 路径（`m2b`）完全同构；
+- `tools/mkext2.py` 从"单文件 ≤1KiB 固定布局"改写为**通用构建器**：任意单层
+  目录树（`--extra ISO/PATH=HOST_FILE`，可重复）、多块文件（12 直块 + 一级
+  间接）、按路径排序的确定性 inode/块分配；`--flat` 语义保留（ext-nopath）。
+
+验收（`tools/boottest.ps1 -Variant ext-mod`）：测试内核 `tools/modtest` 经
+EXT2 启动（内核文件本身 17,360 B → 走间接块），从同一 EXT2 卷读到两个模块：
+
+```
+[modtest] baserev=0
+[modtest] count=2
+[modtest] m0 path=/MODULES/ALPHA.BIN len=4096 media=1 sum16=0xf800 cmd=role=alpha
+[modtest] m1 path=/MODULES/BETA.BIN len=8192 media=1 sum16=0xf000 cmd=role=beta
+```
+
+期望值仍由 `tools/modtest_oracle.py` 从同一份 fixture 字节算出（ISO `mod` 变体
+与 EXT2 `ext-mod` 变体共用同一组期望——介质不同、交付语义相同）。
+
+红态（`git stash -- src` 后实跑）：
+
+```
+PASS: contains [modtest] alive
+PASS: contains [modtest] baserev=0      ← M8 的协议修正（已提交，未随本次 stash）
+FAIL: missing [modtest] count=2        ← 实际 count=0（EXT2 侧尚未装载模块）
+```
+
+## M11 的验证方式
+
+M11 让 AP 横向扩展：一台机器上**多个**辅助处理器同时上线。
+
+修复的缺陷（M6 遗留，代码即证据）：
+
+- `smp.rs` 里每个 AP 都申请 `ALLOCATE_ADDRESS` 的**同一个**页 `0x70000`，
+  第二个 AP 起分配必然失败并 `break`——即 M6 实际只支持 1 个 AP；
+- AP 数量上限写死为 4，且 `TRAMP_PAGES`/`AP_LAPIC_IDS` 静态数组定长 4。
+
+现在：每 AP 独立 trampoline 页 `0x70000 + i×0x1000`（SIPI 向量 = 页号，
+必须 < 256 → 页 < 1MB；同时避开 OVMF 的 AP 重定位缓冲 0x1F0000），上限提到
+`MAX_CPUS`（8），静态数组随之定长。
+
+验收（`tools/boottest.ps1 -Variant smp4`，QEMU `-smp 4`，13 锚）：
+
+```
+[smp] BSP lapic_id=0, total cpus=4
+[smp] fired AP lapic_id=1 / =2 / =3        ← liftoff 发出 INIT-SIPI 并确认 AP 存活
+[smp] AP online, lapic_id=1 / =2 / =3      ← 内核接管三个 AP（percpu/MSR/计时器）
+[kmain] SMP done, 4 cpus online (target 4)
+```
+
+红态（`git stash -- src` 后实跑 `-smp 4`）：`total cpus=2`、只有 `fired AP lapic_id=1`
+与 `AP online, lapic_id=1`，其余 6 条断言全红——正是"每 AP 抢同一页"的直接后果。
+
+**边界（有意不做）**：x2APIC。MADT 的 type 9 条目与 MSR 形式 ICR（0x830）属
+"引导器 + 内核"联合项——内核 arch 层目前只有 MMIO LAPIC（`[lapic] mapped to
+0xffff8000fee00000`），liftoff 单方面切到 x2APIC 会让内核的 LAPIC 访问失效。
+因此本里程碑只做 xAPIC 路径的横向扩展，x2APIC 留待内核侧同步支持。
