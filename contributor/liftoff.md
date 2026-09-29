@@ -186,3 +186,38 @@ fixture 陷阱（验收抓出来的）：EXT2 目录块的尾部零填充不是�
 这个语义与 ISO9660 的零长条目跳扇区规则不同，两个驱动不能共用目录遍历逻辑。
 
 M2a/M2b/M2c 九个变体共同回归，必须同时全绿。
+## M3 的验证方式
+
+M3 实现了 ELF64 静态装载器（`src/elf.rs`）。链路：M2b 光盘链读到
+`KERNEL/KERNIMG.BIN` 后交给 `elf::load`——真实内核 ELF（4.3MB PIE）走完整
+装载路径，串口报段布局、入口、映像大小与校验和。
+
+装载模型（brxLimine `common/lib/elf.c` 916..1039 同构，去 KASLR 与重定位）：
+
+- 布局：PT_LOAD（memsz>0）参与，min_vaddr = 最小 p_vaddr，image_size =
+  max(vaddr+memsz) - min_vaddr（vaddr 跨度，含段间空洞，因此可以大于 Σmemsz）
+- 物理映像：单次 `AllocateAnyPages`（UEFI §7.2 保证单次调用返回连续页块），
+  类型 EfiLoaderData（M4 交接语义）；整区先清零——空洞与 BSS 不继承陈旧内存
+- 段落位：`image_base + (p_vaddr - min_vaddr)`，复制 filesz 字节，余下清零
+- 校验（与 `tools/elf_oracle.py` 同源）：ELF64/LE/EM_X86_64、ET_EXEC|ET_DYN、
+  phentsize==56、filesz<=memsz、offset+filesz 不越文件、4KB 页重叠拒绝
+  （M3 无页表，页内权限无法区分，同页段一律拒绝——brxLimine 只拒绝不同权限，
+  这里更严）
+
+边界：ET_DYN 接受但**不做重定位**（内核 R_X86_64_RELATIVE 的重定位属 M4 协议层
+或内核自举页表后自理）；段数上限 8（内核 3 段留余量）；不触碰页表——装载结果
+目前只用于验收链路闭环，不实际跳转。
+
+验收（`tools/boottest.ps1`）：
+
+- elf-iso：真实内核 ELF 经 mkiso 打包，期望值由 `elf_oracle.py` 运行期计算
+  （内核每次重建都变，fixture 与断言同源动态化），断言段布局 6 行契约
+- elf-bad：4096 字节伪随机 blob 作 KERNIMG.BIN，断言 `M3: reject status=0x30`
+  （BAD_MAGIC），且不出现任何段报告行
+
+工程注记：`boottest.ps1` 的 `$ErrorActionPreference=Stop` 下，cargo 的正常
+stderr（Compiling/Finished）经 `2>&1` 管道时会被当作终止错误——本机直接运行
+不触发，换一种调用方式即触发（S05：脚本不得依赖调用方式）。已改经 cmd /c 执行
+cargo；fixture 假设变量作用域时注意 `-like "iso*"` 不匹配 `elf-iso`（绿灯抓出）。
+
+M2a/M2b/M2c/M3 十一个变体共同回归，必须同时全绿。
