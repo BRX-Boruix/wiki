@@ -283,3 +283,46 @@ M4 修复链（每条都有 QMP 抓拍/串口实锤，记入评审素材）：
 QEMU `-debugcon`（io 0x402）做第二通道；QMP（`-qmp tcp:...` + human-monitor-
 command `info registers`/`xp`）是页表/寄存器级实锤来源，`-no-shutdown` 保留
 三重故障现场。所有 DIAG 代码验证后即删，正式路径 EBS 后零内存写、零服务调用。
+## M5 的验证方式
+
+M5 补齐 RSDP 传递并修复 M4 memmap 交接的两个结构错误。内核侧全链变为：
+RSDP rev=2 → XSDT 遍历 → FADT/HPET/S5 → `acpi initialized`，比 M4 更深
+（栈守护武装、mmio 4K map、hpet enable 全部落地）。
+
+RSDP（`src/efi.rs` + `src/main.rs`）：
+
+- 配置表遍历：SystemTable.configuration_table（EFI_CONFIGURATION_TABLE
+  24B 项 = GUID16 + 指针8，size 断言钉死 24——首版误断言 16 被 E0080 当场
+  拦截）按 ACPI_20_GUID {8868E871-E4F1-11D3-BC22-0080C73C8881}（UEFI §4.6.2）
+  命中后取 RSDP 物理指针
+- 立即拷贝：源页类型 AcpiReclaim 会被内核回收，两阶段读取（20B 基础 →
+  rev≥2 读 offset20 的 length）后拷入 EfiLoaderData；RsdpResponse.address
+  填 HHDM 虚地址（Limine 语义）
+
+memmap 交接修复（`src/handover.rs`，两处都是 M4 遗留、被 M5 揭开）：
+
+1. **指针数组语义**：brxlimine-rs MemmapResponse.entries 是
+   `ArrayPtr<MemmapEntry>` = "entry_count 个指针的数组"（lib.rs 626-627），
+   内核 `mmap: &[NonNullPtr<MemmapEntry>]` 逐槽解引用。M4 误填结构体连续
+   数组 → 内核把 8B 槽当指针解引用出全垃圾（102 条 0x0-0x0 段、
+   max_phys 4GB 假地址）。新布局：LoaderData 页首 = 指针数组 [ptr; n]，
+   页尾 = 结构体数组，指针 = 槽位物理 + HHDM（8n+24n ≤ 4096 → n ≤ 128）
+2. **usable 重叠**：convert_memmap 剥离切割未 clamp 到 desc 区间——
+   k_lo 在 desc 之外时 `k_lo - base` 产出越界长度，91 条 usable 相互重叠，
+   内核 pmm 反复处理同一 448MB 段。三段切割全部 clamp 后 usable 降到 13 条，
+   max_phys 0x7ef4000（126.9MB = 真实 RAM 顶）
+
+loader 自占区（BootloaderReclaimable）：M4 把 EfiLoaderCode/Data 转 usable
+——响应区/文件拷贝/页表会被内核 pmm 回收踩踏。改标
+BootloaderReclaimable(5)（内核 pmm 只回收 Usable，且语义与 Limine 一致：
+内核快照页表根后可复用）。帧缓冲剥离同步改用新增 Handover.fb_phys（
+fb_struct.address 是 HHDM 虚地址，误作物理曾产出 base=0xffff800080000000
+的 Framebuffer 条目，pmm max_phys 飙 17TB）。
+
+验收（`tools/boottest.ps1 -Variant boot`，内置 5 锚，不依赖调用参数）：
+
+- `Hello, BORUIX!` / `Kernel M0 is running.`（跳转 + banner）
+- `[mm] HHDM offset: 0xffff800000000000`（协议 HHDM）
+- `[acpi] RSDP rev=2`（M5 配置表 → 拷贝 → HHDM 全链）
+- `LazyBuddy init done`（memmap 指针数组语义 + 无重叠 usable 的 pmm 全程）
+- 全 12 变体回归全绿
