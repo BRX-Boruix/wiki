@@ -670,11 +670,11 @@ LazyBuddy init done
 挂好安装模式根之后会停在「找不到 init」的路径上——本变体的验收点仍是引导器侧的
 安装模式全链，用户态启动不在断言范围（M9 起即如此，避免用例抖动）。
 
-### 未完成项（本里程碑的真实边界）
+### 多组元数据（把 ext-boot 收成 11/11 的修复）
 
 自建盘能被 **liftoff** 正常挂载并读出 8.9 MiB 内核（`M2C: mount ok` +
-`[m9] kernel path=/boot/kernel` + ELF 装载均通过），但**内核**在 `[boot] install mode
-detected` 之后、打印 `[boot] install mode root` 之前停住。
+`[m9] kernel path=/boot/kernel` + ELF 装载均通过），但最初**内核**在 `[boot] install mode
+detected` 之后、打印 `[boot] install mode root` 之前停住。补上多组元数据后 11/11 通过。
 
 已定位的根因（有日志与字段证据）：**夹具缺少分配器一致性元数据**。安装模式把启动分区
 **读写**挂为根，内核随即 `build_skeleton` 在其中创建骨架目录——那需要分配 inode 与块，
@@ -686,13 +686,13 @@ detected` 之后、打印 `[boot] install mode root` 之前停住。
 - 组描述符与超级块的空闲计数为 0。
 
 规范系统盘（`mke2fs` 产出）具备完整多组元数据，这正是 M9 能过而自建盘不能的原因。
-两条修法（择一）：
+**采用的修法**：1 KiB 块下按 8 个块组铺开——每组一个 32 B 组描述符、块位图、inode 位图与
+inode 表（2 块），位图按实际占用写位，组描述符与超级块的空闲计数同源计算；inode 寻址改为
+按组（`(ino-1)/ipg` → 组描述符 → 表块 + 组内下标）。`blocks_per_group = 8192` 是 EXT2
+经典上限（8 × 块大小，保证位图装进一个块）。
 
-1. **多组元数据**：1 KiB 块下按 8 组铺开（每组块位图 + inode 位图 + inode 表，GDT 写 8 项，
-   数据块跨组继续分配）；
-2. **4 KiB 块**：63 MiB / 4 KiB = 16128 块 ≤ 32768（单组上限）→ 单组即可，代价是
-   liftoff 的 EXT2 读器目前只支持 1 KiB 块（`mount` 对 `s_log_block_size != 0` 直接拒绝），
-   需一并扩展。
+（另一条路是改用 4 KiB 块：63 MiB / 4 KiB = 16128 块 ≤ 32768 单组上限 → 单组即可，但
+liftoff 的 EXT2 读器目前只支持 1 KiB 块，需一并扩展；本次未走这条路。）
 
 ### 顺带修掉的验收脚本缺陷（假绿）
 
@@ -704,3 +704,15 @@ detected` 之后、打印 `[boot] install mode root` 之前停住。
 - **最终判定依赖 QEMU 被杀后的日志**：`-serial file:` 的缓冲在强杀时可能未落盘（实测
   只剩 87 字节 / 13 KiB 截断），事后重读会拿到不完整日志。现在轮询命中即**快照**日志，
   判定使用快照。
+**修复后的实测**（`ext-boot`，11/11）：
+
+```
+[m2c] mbr disk_id=0x424f5255 partition=1 start_lba=2048
+M2C: mount ok
+[m9] kernel path=/boot/kernel
+[boot] install mode detected: boot disk mbr_disk_id=0x424f5255 partition_index=1
+partition lba=2048 (EXT2)          ← 内核接受自建盘为读写安装根
+```
+
+离线侧同时用 `tools/extverify.py` 逐字节核对 `/boot/kernel`（8,957,688 B，走二级间接），
+`OK /boot/kernel size=8957688 sum16=0xc225`。
