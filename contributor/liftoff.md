@@ -379,3 +379,56 @@ IP/CR2/错误码逐条定位）。
   `[smp] BSP lapic_id=0`、`fired AP lapic_id=1`（响应结构 + 指针数组）、
   `[smp] AP online, lapic_id=1`（AP 启动全链）；
 - 全 12 变体回归全绿。
+## M8 的验证方式
+
+M8 实现 Limine **模块请求**（`ModuleRequest`）：引导器把启动载荷作为模块
+交给内核。关键设计是**按需加载**——只有内核映像声明了该请求标记时才读文件、
+才分配内存（`boruix::has_request`）。BORUIX 内核不声明，因此它"介质即系统 /
+单源"（ADR-017/028）架构完全不受影响：不读、不分配、行为零变化。
+
+协议面（`src/modules.rs` + `src/boruix.rs`）：
+
+- 请求标记 id `[0x3e7e279702be32af, 0xca1c4f3bd1280cee]`（brxlimine-rs 689）；
+- `ModuleResponse { revision, module_count, modules }` + module_count 个
+  `File` **指针**（ArrayPtr 语义，与 memmap/SMP 同款教训）；
+- `File.base` / `path` / `cmdline` 都是 HHDM 虚地址（内核直接解引用）；
+- 内存布局：LoaderData 结构页（File 数组 8×112B @0x000、指针数组 @0x400、
+  字符串区 @0x500，编译期 `assert!` 钉死各区间不重叠）+ 每个模块内容独占
+  页块；重转后的 memmap 里是 BootloaderReclaimable——EBS 后仍有效且不被
+  BORUIX 的 pmm 回收；
+- 模块清单是 `config::MODULES`（`limine.cfg` 的编译期等价物）：(ISO 路径,
+  命令行)。上游 Limine 的模块清单来自配置文件，我们的编译期常量与之同构。
+
+**独立消费者验收**（新增 `mod` 变体）：`tools/modtest` 是一个极小的 no_std
+测试内核（静态 ET_EXEC、高半 vbase），只声明 `BaseRevision` + `ModuleRequest`
+两个标记，打印收到的模块清单后停机。它与 BORUIX 无关，是"liftoff 真的把模块
+交出去了"的第三方证据（同 `elf_oracle.py` 的真实链路思路）：
+
+```
+[modtest] baserev=0
+[modtest] count=2
+[modtest] m0 path=/MODULES/ALPHA.BIN len=4096 media=1 sum16=0xf800 cmd=role=alpha
+[modtest] m1 path=/MODULES/BETA.BIN len=8192 media=1 sum16=0xf000 cmd=role=beta
+```
+
+期望值由 `tools/modtest_oracle.py` 从**同一份 fixture 字节**算出（生成模块
+文件 + 生成断言，单一来源）；`modtest_oracle.py` 中模块表的 cmdline 与
+`config.rs::MODULES` 必须一致，不一致会以断言失败自曝。
+
+红态证据（实现前，`git stash -- src` 后实跑）：
+
+```
+PASS: contains [modtest] alive
+FAIL: missing [modtest] baserev=0      ← 实际 baserev=6
+FAIL: missing [modtest] count=2        ← 实际 "no module response"
+```
+
+**顺带修正的协议不合规**：`BaseRevision` 的语义是"引导器支持请求版本时把
+该字段原位写 0"（brxlimine-rs `BaseRevision::is_supported()` 只认 `revision == 0`）。
+M4–M7 一直传 `max_revision = 0`，于是声明 6 的内核（BORUIX/modtest）字段一直是 6
+——等于引导器声称"不支持"。现在传 `config::LIMINE_BASE_REVISION`，声明版本 ≤ 我们
+协议版本的一律写 0（红态里 `baserev=6`、绿态 `baserev=0` 是这条修复的直接证据）。
+
+工具链改动：`tools/mkiso.py` 新增可重复的 `--extra ISO/PATH=HOST_FILE`
+（单层目录，确定性布局；无 `--extra` 时输出与旧版逐字节相同）；
+`tools/modtest/{main.rs,linker.ld,build.ps1}` 为消费者内核与其构建。
