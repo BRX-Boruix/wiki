@@ -221,3 +221,65 @@ stderr（Compiling/Finished）经 `2>&1` 管道时会被当作终止错误——
 cargo；fixture 假设变量作用域时注意 `-like "iso*"` 不匹配 `elf-iso`（绿灯抓出）。
 
 M2a/M2b/M2c/M3 十一个变体共同回归，必须同时全绿。
+## M4 的验证方式
+
+M4 让 liftoff 从"验收壳"变成真 bootloader：把 M3 装载的内核送进 CPU，
+内核以 Limine 语义子集接管机器。交接面 = BORUIX 内核已消费的 7 项协议：
+BaseRevision、HHDM、Memmap、Framebuffer、Rsdp、KernelFile、KernelAddress
+（SMP 等 16 项未消费请求全部裁剪）。内核零改动。
+
+交接链（`src/boruix.rs` + `src/handover.rs` + `src/paging.rs`）：
+
+- 响应扫描：内核镜像内 48B 窗口滑步匹配 `COMMON_MAGIC|id(2u64)|rev|response`
+  请求标记（brxlimine-rs `Request` 布局），命中即在内核镜像内回填响应指针；
+  BaseRevision 标记（24B，无 COMMON_MAGIC 前缀）单独扫，rev≤0 时写 0 表示支持
+- 响应区：单块 EfiLoaderData；所有响应结构指针以 **HHDM 虚地址**填入
+  （Limine 语义：内核经 HHDM 直接解引用；KernelAddressResponse.physical_base
+  除外——保持物理）
+- 内存映射：GetMemoryMap（64KiB 缓冲，重试上限 4）→ UEFI 类型转 Limine 7 类
+  （Conventional/LoaderCode/LoaderData/BootServices* → Usable；ACPI reclaim/
+  NVS 保留原语义；Runtime*/MMIO → Reserved）→ 内核区单列 KernelAndModules、
+  帧缓冲区单列 Framebuffer → 按 base 排序 + 相邻同类型合并
+- 帧缓冲：LocateProtocol(GOP) → mode.info → Framebuffer{address=HHDM 虚地址,
+  1280x800x32, RGB/BGRX 掩码}；GOP 槽位序 QueryMode/SetMode/Blt/Mode
+  （UEFI §11.9——mode 在 24B，首轮错排成 16B 读到垃圾指针，靠断言+运行期抓拍揪出）
+- RSDP：M4 子集传 NULL（内核 acpi::init 有 Option 退化）；M5 补 configuration
+  table 遍历
+- 页表：4 级大页（2MiB）。恒等 [0,ram_top)+LAPIC 区（0xFF000000，EBS 回调
+  期间固件 handler 仍写 LAPIC EOI——CR2=0xFEE00020 #PF 实锤）、HHDM
+  [HHDM, +max(ram_top, fb_end))（帧缓冲 BAR 在 RAM 顶端之外）、内核高区
+  [kvbase, +ksize) 逐 2MiB 窗口（物理基址必须 2MiB 对齐——AllocateAnyPages
+  只保证 4KiB，多分配 512 页取对齐子区）
+- 跳转：cli + cld → CR3 → 近跳 entry。长模式与 CS 沿用 UEFI；内核 kmain
+  自切 __kstack_top 栈、自建 GDT。far ret（retfq）在 LLVM Intel 语法下编码
+  不可靠（实测跳后静默），弃用
+- EBS：GetMemoryMap 取 key → ExitBootServices(key)，失败（映射变更）重取
+  重试 ≤4；EBS 后零 BootServices 调用
+
+M4 修复链（每条都有 QMP 抓拍/串口实锤，记入评审素材）：
+
+1. GOP mode 槽位 16→24（info 指针读到 0xcd894d5541c68945 垃圾）
+2. 内核物理基址 2MiB 对齐（AllocateAnyPages 4KiB 对齐 → 大页 #PF）
+3. 响应指针物理→HHDM 虚地址（Limine 语义）
+4. **PIE 重定位**：内核是 DYN，.rela.dyn 3138 条 R_X86_64_RELATIVE，GOT/字面量
+   槽在文件里为 0——不处理则 kmain 读 __kstack_top 得 0，rsp=0，第一条 push
+   #PF（CR2=0xfffffffffffffff8，QMP info registers 抓拍 RSP=0 实锤）。
+   elf.rs 第三遍：PT_DYNAMIC→DT_RELA/DT_RELASZ/DT_RELAENT→逐条 RELATIVE
+   slot(image_base+r_offset-vbase)=addend（高半恒等装载 load_bias=0）
+5. HHDM 映射上界覆盖帧缓冲 BAR（内核 [terminal] 写 fb #PF，内核异常处理器
+   自报 CR2=0xffff800080000000=HHDM+ram_top）
+6. asm! clobber 声明（rdx/rbx/rcx）——noreturn 下遗漏导致寄存器踩踏随机死
+
+验收（`tools/boottest.ps1 -Variant boot`）：
+
+- 断言串口出现 `Kernel M0 is running.`——只有固件真实装载 liftoff、liftoff
+  真实装载内核、交接真实成功，内核 kmain 才能打出该行
+- 内核侧完整链路：Hello, BORUIX! → Kernel M0 is running. → [kmain] serial &
+  driver hub → [mm] HHDM offset 0xffff800000000000 → [pmm] 112 entries →
+  driver_hub 四阶段 → pci 枚举
+- M2a/M2b/M2c/M3/M4 全 12 变体回归全绿
+
+工程注记：EBS 后 COM1 输出在 OVMF/QEMU 下不可靠（偶发丢字节），调试期用
+QEMU `-debugcon`（io 0x402）做第二通道；QMP（`-qmp tcp:...` + human-monitor-
+command `info registers`/`xp`）是页表/寄存器级实锤来源，`-no-shutdown` 保留
+三重故障现场。所有 DIAG 代码验证后即删，正式路径 EBS 后零内存写、零服务调用。
