@@ -559,3 +559,53 @@ M11 让 AP 横向扩展：一台机器上**多个**辅助处理器同时上线�
 "引导器 + 内核"联合项——内核 arch 层目前只有 MMIO LAPIC（`[lapic] mapped to
 0xffff8000fee00000`），liftoff 单方面切到 x2APIC 会让内核的 LAPIC 访问失效。
 因此本里程碑只做 xAPIC 路径的横向扩展，x2APIC 留待内核侧同步支持。
+## M12 的验证方式
+
+M12 是**引导器 + 内核联合**里程碑：x2APIC。x2APIC 把 LAPIC 寄存器访问从
+MMIO（0xFEE00000）改为 MSR（0x800 + 偏移/16），ICR 变成单次 64 位写
+（MSR 0x830）。**x2APIC 使能后 MMIO 窗口不再代表 LAPIC**，因此两侧必须
+同时支持并达成一致——这正是 Limine `SmpResponse.flags` bit0
+（"X2APIC has been enabled"，brxlimine-rs lib.rs 552）的用途。
+
+### 分工
+
+| 侧 | 工作 |
+| --- | --- |
+| liftoff | CPUID.1:ECX[21] 探测；`IA32_APIC_BASE` bit10 使能 x2APIC；MADT **type 9**（x2APIC）条目枚举（无 type 9 时回退 type 0）；SVR/TPR/ID/ICR 全部按模式分派（MSR vs MMIO）；`SmpResponse.flags` bit0 上报 |
+| 内核 | `lapic_read/write` 按模式分派到 MSR；`send_fixed_ipi` 在 x2APIC 下单次 64 位 MSR 写；`current_lapic_id()` 取全 32 位 id；`is_mapped()` 在 x2APIC 下不再依赖 MMIO 映射；`init()` 依 flags 选模式（x2APIC 不做 MMIO 映射）；**每个 AP 在入口最先把本核切到 x2APIC** |
+
+### 验收
+
+新增 `x2apic` 变体：`-cpu qemu64,+x2apic`（最小 CPU 模型 + 恰好打开 x2APIC）
+与 `-smp 4`，15 锚全过：
+
+```
+[m6] x2apic supported=true enabled=true bsp_lapic=0   ← liftoff 探测并使能
+[lapic] x2APIC mode: MSR access (id=0)                ← 内核按 flags 选同一模式
+[smp] fired AP lapic_id=1 / =2 / =3                   ← MSR ICR 单次 64 位写启动 AP
+[smp] AP online, lapic_id=1 / =2 / =3                 ← 三个 AP 全部被内核接管
+[kmain] SMP done, 4 cpus online (target 4)
+```
+
+**xAPIC 回退路径同样被覆盖**：默认 `qemu64` CPU 无 x2APIC（实测
+`[m6] x2apic supported=false enabled=false`），故既有 `boot`/`smp4` 变体跑的
+就是 MMIO 路径（内核打印 `[lapic] mapped to 0xffff8000fee00000`），
+`smp4` 变体新增该回退断言。两条路径因此都有真实链路覆盖。
+
+### 红态与两个真实缺陷（都有实测证据）
+
+1. **AP 未上线**（liftoff 已开 x2APIC、内核未在 AP 侧切模式）：AP 经 INIT 起来
+   仍是 xAPIC，而内核的访问模式是全局的——`ap_entry` 第一句就调
+   `current_lapic_id()`，在 xAPIC 的核上读 x2APIC MSR 触发 #GP，机器级联
+   停机（日志停在 `[smp] fired AP lapic_id=1`）。修法：新增
+   `lapic::ensure_x2apic_on_this_cpu()`，`ap_entry` 最前面调用。
+2. **修好后又变成 SpinMutex 同核重入 panic**（`cpu: 2`，spin.rs:109）。根因是
+   我在切换函数里加了一条日志：该函数运行在 AP 的 per-CPU 状态就绪**之前**，
+   而 klib 串口锁用 `cpu_slot_id()`（返回槽位 + 1）做同核重入检测——槽位未就绪
+   时它回退为常量 1，于是「BSP 持锁」被误判为「本核重入」并当场 panic。
+   修法：切换保持静默（函数文档写明**不得打印日志**），并顺手修正 panic
+   消息把槽位印成 `slot+1` 的误导（`me.wrapping_sub(1)`）。
+
+工程注记：`-cpu max` 会在同一处触发另一个内核 panic（btree/alloc 栈帧），
+与 x2APIC 无关（那是 `-cpu max` 暴露的其它特性路径），故本变体刻意选用
+最小 CPU 模型 + 单一特性，把变量隔离到 x2APIC 一个维度。
