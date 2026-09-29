@@ -123,3 +123,33 @@ M2a 证明固件文件协议链可用：`LoadedImage`（自身镜像）→ `Devi
 
 脚本位于 `tools/boottest.ps1`，先构建、再摆 ESP、再引导、再断言串口日志；QEMU 路径取自
 项目根 `.env` 的 `QEMU_DIR`。M2b 起 ISO9660 与 EXT2 的读取将复用同一脚本加新变体。
+## M2b 的验证方式
+
+M2b 实现了 ISO9660 只读驱动（`src/iso9660.rs`，ECMA-119 基本卷）。链路：
+`LocateHandleBuffer(BlockIo)` → 逐句柄 `HandleProtocol` → 光驱判定（只读且块大小
+2048，与 brxLimine 同款判定式）→ `CD001` 探测挂载 → 读 `KERNEL/KERNIMG.BIN`，
+串口报长度与 16 位字节和。
+
+架构约定：
+
+- **解析器与固件解耦**：块读取经 `iso9660::BlockRead` trait 注入，`UefiBlock` 适配器
+  负责 BlockIo 的块对齐拼接。M2c 的 EXT2 复用同一 trait，不重写这套边界。
+- **暂存缓冲单点定义**：`PoolBuf` 走固件 `AllocatePool`/`FreePool`（类型
+  EFI_BOOT_SERVICES_DATA），Drop 即释放。不许再引入第二套分配器。
+- **名字归一化**：匹配时去 `;版本号` 后缀、去版本分隔符前的尾点、ASCII 大小写不敏感。
+  未来 xorriso 生成的真实 liveCD 用大写 8.3 名，同一匹配路径覆盖。
+- **不支持 multi-extent**：带 0x80 标志的记录直接报错（内核 ELF 单 extent 上限 4GB，
+  超出拒绝比读出错误内容诚实）。
+- **目录条目不跨扇区**：`length==0` 的填充区跳到下一扇区边界继续（ECMA-119 6.8.1.1）。
+
+验收（`tools/boottest.ps1`，fixture 由 `tools/mkiso.py` 确定性生成，独立解析脚本
+`_verify_iso.py` 先验证 fixture 合法）：
+
+- iso：合法 ISO 含 `/KERNEL/KERNIMG.BIN`（36 字节），断言 `M2B: mount ok`、
+  `M2B: len=36`、`M2B: sum=0x089c`
+- iso-nosig：非 ISO 随机块，断言 `M2B: mount failed status=0x11`（探测失败码），
+  且不出现 mount ok
+- iso-nopath：合法 ISO 但根目录无 KERNEL 目录，断言 mount ok 后
+  `M2B: open failed status=0x800000000000000e`
+
+M2a 的三个变体（SFS 链基线）与 M2b 共同回归，六个变体必须同时全绿。
