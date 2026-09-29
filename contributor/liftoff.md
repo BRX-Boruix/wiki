@@ -153,3 +153,36 @@ M2b 实现了 ISO9660 只读驱动（`src/iso9660.rs`，ECMA-119 基本卷）。
   `M2B: open failed status=0x800000000000000e`
 
 M2a 的三个变体（SFS 链基线）与 M2b 共同回归，六个变体必须同时全绿。
+## M2c 的验证方式
+
+M2c 实现了 EXT2 只读驱动（`src/ext2.rs`）。链路：`BlockIo` 枚举 → 磁盘判定
+（可写、512B 块、非分区）→ 超级块魔数（0xEF53 @1024）→ 组描述符 → inode 表 →
+目录项下钻 `/BOOT/KERNIMG.BIN`，串口报长度与 16 位字节和。
+
+布局事实源是内核 `kernel/crates/fs/src/ext2.rs` 的取证版（SB 字段偏移、GDT @
+first_data_block+1、inode 表定位公式 `(ino-1)/ipg`、目录项 8 字节头）。两侧是
+同一份磁盘格式的两个独立解析器，fixture 必须能同时被两者读懂。
+
+有意收窄的边界（显式拒绝，不是遗漏）：
+
+- 块大小只支持 1024（`log_block_size==0`），其余显式报错
+- 数据寻址：直接块 12 + 一级间接；二级/三重间接报错（内核 ELF 不超过 12KiB 时
+  不触达，M3 按需扩展）
+- 目录数据上限一个块（1024B）：fixture 与安装镜像口径，超出报 CORRUPT_DIRENT
+- 无 MBR：M2c 整盘挂载；分区解析与 media_type 语义归 M4 BootSource 逻辑
+
+验收（`tools/boottest.ps1`，fixture 由 `tools/mkext2.py` 确定性生成，
+`_verify_ext2.py` 独立验证）：
+
+- ext：合法 EXT2 含 `/BOOT/KERNIMG.BIN`（38 字节），断言 `M2C: mount ok`、
+  `M2C: len=38`、`M2C: sum=0x08b7`
+- ext-nosig：非 EXT2 随机块，断言 `M2C: mount failed status=0x21`（BAD_MAGIC），
+  且不出现 mount ok
+- ext-nopath：合法 EXT2 但根目录无 BOOT 目录，断言 mount ok 后
+  `M2C: open failed status=0x800000000000000e`
+
+fixture 陷阱（验收抓出来的）：EXT2 目录块的尾部零填充不是合法目录项——
+最后一项的 rec_len 必须覆盖到块尾，否则解析器把零字节当 rec_len=0 的损坏项拒绝。
+这个语义与 ISO9660 的零长条目跳扇区规则不同，两个驱动不能共用目录遍历逻辑。
+
+M2a/M2b/M2c 九个变体共同回归，必须同时全绿。
