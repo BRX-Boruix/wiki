@@ -609,3 +609,98 @@ MMIO（0xFEE00000）改为 MSR（0x800 + 偏移/16），ICR 变成单次 64 位�
 工程注记：`-cpu max` 会在同一处触发另一个内核 panic（btree/alloc 栈帧），
 与 x2APIC 无关（那是 `-cpu max` 暴露的其它特性路径），故本变体刻意选用
 最小 CPU 模型 + 单一特性，把变量隔离到 x2APIC 一个维度。
+## M13 的验证方式
+
+M13 让 `ext-boot` 变体**自建系统盘**，不再依赖工作区里现成的 `systemdisk.img`
+（那是由 `tools/main.py build --systemdisk` 产出的 64MiB 安装盘）。
+
+### 新工具
+
+- `tools/mksysdisk.py`：确定性 MBR + EXT2 系统盘构建器。**逐字段镜像规范盘的
+  布局**，因此既有的锚（磁盘签名 / 分区号 / 起始 LBA）一字不改仍然成立：
+
+```
+MBR : sig 0xAA55, disk_id 0x424F5255("BORU"), part1 status=0x80 type=0x83
+      start_lba=2048 sectors=129024        （CHS 全 0：内核 MBR 解析有意忽略 CHS）
+EXT2: 1KiB 块，blocks_count=64512，/boot/kernel = 内核 ELF
+```
+
+- `tools/extverify.py`：**独立于 liftoff** 的夹具校验器——自己解析超级块/GDT/
+  inode，映射直块 / 一级 / 二级间接，把文件读回来与宿主源文件**逐字节比对**。
+  夹具构建器的缺陷在启动任何东西之前就能暴露。
+
+### 顺带修掉的构建器缺陷（红态有实测证据）
+
+`mkext2.py` 原先只支持直块 + 一级间接（上限 268 KiB）。直接用它装 8.9 MiB 内核
+时它**不报错**，却把 8,480 个间接表项（33,920 B）写进了 1 KiB 的间接块——
+越界覆盖了后续数据块。用新的校验器实测：
+
+```
+FAIL /BOOT/KERNIMG.BIN size=8957688 host=8957688
+     first diff at byte 274432 (logical block 268): image=0x00 host=0x4b
+```
+
+差异位置恰好是 12 直块 + 256 一级间接的边界（268 × 1024 = 274432），之后全是零
+（inode 的 i_block[13] 为 0，读作稀疏洞）。补上**二级间接**（l2 表 + 每 256 块
+一个 l1 表）与 `min_blocks`（按分区容量定文件系统大小）后：
+
+```
+OK   /BOOT/KERNIMG.BIN size=8957688 sum16=0xc225
+```
+
+### 验收
+
+`ext-boot` 现在自己产出 `target/systemdisk.img` 再引导。**当前 10/11 锚通过**：唯一
+未过的是内核侧的安装模式根行 `partition lba=2048 (EXT2)`——自建盘尚未被内核接受为
+可读写根（根因与修法见本节末「未完成项」）：
+
+```
+[m2c] mbr disk_id=0x424f5255 partition=1 start_lba=2048
+M2C: mount ok
+[m9] kernel path=/boot/kernel            ← 规范安装路径（非 M2c 夹具路径）
+M3: segs=3 entry=…
+Hello, BORUIX! / Kernel M0 is running.
+[mm] HHDM offset: 0xffff800000000000 / [acpi] RSDP rev=2
+[boot] install mode detected: boot disk mbr_disk_id=0x424f5255 partition_index=1
+partition lba=2048 (EXT2)
+LazyBuddy init done
+```
+
+工程注记：自建盘里没有 `/programs`（规范盘有，故那台还能起 PID 1），所以内核在
+挂好安装模式根之后会停在「找不到 init」的路径上——本变体的验收点仍是引导器侧的
+安装模式全链，用户态启动不在断言范围（M9 起即如此，避免用例抖动）。
+
+### 未完成项（本里程碑的真实边界）
+
+自建盘能被 **liftoff** 正常挂载并读出 8.9 MiB 内核（`M2C: mount ok` +
+`[m9] kernel path=/boot/kernel` + ELF 装载均通过），但**内核**在 `[boot] install mode
+detected` 之后、打印 `[boot] install mode root` 之前停住。
+
+已定位的根因（有日志与字段证据）：**夹具缺少分配器一致性元数据**。安装模式把启动分区
+**读写**挂为根，内核随即 `build_skeleton` 在其中创建骨架目录——那需要分配 inode 与块，
+而当前夹具：
+
+- 块位图 / inode 位图**全零**（写成「全部空闲」，与真实 mkfs 镜像不一致）；
+- `blocks_per_group=8192` 而 `blocks_count=64512` → 规范上应为 **8 个块组**，但只写了
+  1 个组描述符，其余组的位图 / inode 表不存在；
+- 组描述符与超级块的空闲计数为 0。
+
+规范系统盘（`mke2fs` 产出）具备完整多组元数据，这正是 M9 能过而自建盘不能的原因。
+两条修法（择一）：
+
+1. **多组元数据**：1 KiB 块下按 8 组铺开（每组块位图 + inode 位图 + inode 表，GDT 写 8 项，
+   数据块跨组继续分配）；
+2. **4 KiB 块**：63 MiB / 4 KiB = 16128 块 ≤ 32768（单组上限）→ 单组即可，代价是
+   liftoff 的 EXT2 读器目前只支持 1 KiB 块（`mount` 对 `s_log_block_size != 0` 直接拒绝），
+   需一并扩展。
+
+### 顺带修掉的验收脚本缺陷（假绿）
+
+`boottest.ps1` 有两个会让「测试没跑」伪装成「测试通过」的问题，本次均已修复：
+
+- **空期望列表也报 PASS**：变体若没定义任何断言，`$failed` 保持 false → 直接
+  `BOOTTEST PASS`。本次正是在编辑脚本时误删了 ext-boot 的整段断言，从而得到一次假绿；
+  现在空期望列表**硬失败**（`FAIL: variant ... produced no expectations`）。
+- **最终判定依赖 QEMU 被杀后的日志**：`-serial file:` 的缓冲在强杀时可能未落盘（实测
+  只剩 87 字节 / 13 KiB 截断），事后重读会拿到不完整日志。现在轮询命中即**快照**日志，
+  判定使用快照。
