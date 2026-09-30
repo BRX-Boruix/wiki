@@ -798,3 +798,63 @@ brxLimine 的 trampoline 恰好置好了这些位，所以缺陷只在 liftoff �
 3. 给 scheduler::start/首次 sysret 加临时串口标记，二分定位卡在哪一步。
 
 （本轮结论：liftoff 引导器侧完整可用；OS 侧卡在用户态首切，未解决。）
+### M14 定位（对照实验）：根因是 AP 的 LAPIC 未按 BSP 使能
+
+方法：**同一内核 + 同一盘内容**，只换引导器（`build --systemdisk` 走 BIOS/brxLimine；
+`build --systemdisk --liftoff` 走 UEFI/liftoff），在 `scheduler::start()` 的第一条 x87
+指令前打印 CPU 状态，逐字段对比。
+
+| 观测 | BIOS (brxLimine) | UEFI (liftoff) |
+| --- | --- | --- |
+| 异常风暴 | 0 | 0 |
+| `[smp] AP online` ×3 | ✓ | ✓ |
+| `[kmain] init: spawned pid=1` | ✓ | ✓ |
+| `[sched] AP slot N pre-x87` | **✓ 3 个 AP 都到** | **✗ 从未出现** |
+| `fp probe cw=` | ✓ `0x037f` | ✗ |
+| `username:`（登录提示） | **✓** | ✗ |
+
+结论：liftoff 下 AP 停在 `ap_entry` 末尾的 halt 循环，**从未被中断唤醒进入
+`scheduler::start()`**（该路径靠 IRQ 唤醒后检查 `AP_SCHED_ENABLED`）。即 **AP 的 LAPIC
+没有工作**。
+
+brxLimine 的 `smp_trampoline.asm_x86` 第 55-74 行正是为此同步 BSP 的 `IA32_APIC_BASE`：
+
+```asm
+mov ecx, 0x1b          ; IA32_APIC_BASE
+rdmsr                  ; 读 AP 当前值，处理 x2APIC/xAPIC 差异
+.write_apic_msr:
+    mov eax, [bsp_apic_addr_msr_lo]   ; 取 BSP 的值
+    mov edx, [bsp_apic_addr_msr_hi]
+    bts eax, 11        ; 置 APIC 全局使能
+    btr eax, 8         ; 清 BSP 位
+    wrmsr              ; 写到 AP
+```
+
+**我们的 TRAMP64 从不碰 `IA32_APIC_BASE`** —— 这是与 Limine 语义（"AP 的 CPU 状态与 BSP
+一致"）的第一处实质缺口，也是当前"init 拉不起来"的直接原因。
+
+另一处结论（顺带纠正）：**AP 的 CR4 在两条链路下都不含 OSFXSR/OSXMMEXCPT**（BIOS 的
+`pre-x87` 显示 `cr4=0x310220`，其中 0x200 是内核自己 `enable_fpu()` 补的；`[cpu]` 行打印
+时还没补）。所以此前"为 liftoff 给内核补 CR4 SSE 位"的改动是**多余且方向错误**的，
+已回退（kernel c443713 / 4ddb0e4）。
+
+### 与 Limine 语义的完整差距清单（待移植进 liftoff trampoline）
+
+| # | brxLimine 做、liftoff 没做 | 影响 |
+| --- | --- | --- |
+| 1 | **同步 `IA32_APIC_BASE`**（bit11 使能、bit8 清、x2APIC 位按请求） | **AP 收不到中断 → 当前根因** |
+| 2 | 用 **BSP 的 GDT**（16/32 位阶段用 BSP GDTR；64 位加 HHDM 后重新 `lgdt`） | AP 段选择子语义 |
+| 3 | **清 TSS busy 位并 `ltr`**（BSP 的 TSS） | IST/异常栈 |
+| 4 | 同步 **MTRR**（`mtrr_restore` 回调） | 内存类型（WC/UC） |
+| 5 | `lapic_setup` 回调（引导器配置 AP 的 LAPIC） | AP LAPIC 就绪 |
+| 6 | **`iretq` 进内核**（CS=0x28/SS=0x30/RFLAGS=0x2）并**清零全部 GPR** | AP 起始寄存器确定 |
+| 7 | 进入前 **TLB flush**（`mov cr3` 自读自重） | 页表一致性 |
+| 8 | 早期 `lidt invalid_idt` | 失败即三故障而非跳垃圾 |
+
+### 协议合规（本轮已修）
+
+- **`SmpRequest.flags` 被无视**（vendor lib.rs:585：bit0 = "Enable X2APIC, if possible"；
+  BORUIX 传 0 = 明确不要开）。liftoff 曾只要 CPUID 支持就开 x2APIC，迫使内核必须支持 MSR
+  访问 —— 这直接导致了那次错误的内核改动。现已在 liftoff 侧修正（读字段、按请求决定）；
+- 带字段的请求只有三个：`SmpRequest.flags`（已实现）、`StackSizeRequest.stack_size` 与
+  `PagingModeRequest.flags`（不填响应 = 诚实的"不支持"）。其余 16 个无字段。
