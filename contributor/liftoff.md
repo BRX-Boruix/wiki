@@ -909,13 +909,15 @@ master 上已定位但未解决的最后一步：内核在 BSP 第一次进入 P
 两者互斥且都未启用时 `compile_error!`。宿主测试固定用
 `cargo test --no-default-features --features impl-mock`。
 
-当前测试账目：**23 个宿主单测**（addr 9、paging 5、hhdm 4、platform 2、x86_64 1、mock 2），
+实现补齐：`x86_64::paging` 实现 `PageTable`（4 级页表 + 2 MiB 大页，帧来源经 `FrameAllocator` 注入，页表经注入的 `DirectMap` 访问，因此宿主测试可用内存缓冲构造“假 HHDM”真实走表）；`current` 对外只暴露统一门面 `PlatformImpl`（不泄露实现 crate 的模块树，真实实现与 mock 同名）；`boot` 作为唯一装配点接上该门面（入口输出一行平台诊断）。
+
+当前测试账目：**30 个宿主单测**（addr 9、paging 6、hhdm 4、platform 2、x86_64 platform 1、x86_64 paging 5、mock 3），
 `cargo build --release --target x86_64-unknown-uefi` 零警告。
 
 待办（进入 QEMU 验证之前必须完成）：
 
 - ADR-051 的离线反汇编核对尚无**可复现脚本**：`hlt`/`cli`/`sti` 曾人工核对通过，但 `out`/`in`
   的核对与脚本化未完成；该脚本应落在 `tools/checks/`（ADR-052 第 3 层）
-- `arch` 的分页与 HHDM 抽象尚无实现接入（`x86_64` 侧尚未实现 `PageTable`）
+- 验收层尚未建：`boot` 的入口行为需靠 QEMU 端到端（ADR-052 第 1 层）验证
 
 
