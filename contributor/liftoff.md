@@ -858,3 +858,34 @@ rdmsr                  ; 读 AP 当前值，处理 x2APIC/xAPIC 差异
   访问 —— 这直接导致了那次错误的内核改动。现已在 liftoff 侧修正（读字段、按请求决定）；
 - 带字段的请求只有三个：`SmpRequest.flags`（已实现）、`StackSizeRequest.stack_size` 与
   `PagingModeRequest.flags`（不填响应 = 诚实的"不支持"）。其余 16 个无字段。
+### gen2 重写（分支 `rewrite/gen2`）
+
+2026-09-30 起 liftoff 进入清空重写：`master` 保留原实现（M1–M14），`rewrite/gen2` 从空树
+重建，按 brxLimine 的语义逐项移植。
+
+分层规划（按职责，避免与具体内核耦合）：
+
+- 入口层：UEFI 入口、panic、halt
+- 固件绑定层：EFI 类型与协议（按需展开）
+- 架构层：cpu、gdt、lapic、smp、trampoline
+- 内存层：paging、memmap、mtrr
+- 协议层：Limine 请求的声明扫描与响应填写
+- 装载层：ELF、EXT2、ISO9660
+
+当前状态：只有入口层与 COM1 串口输出；`cargo build --release --target x86_64-unknown-uefi`
+通过。
+
+重写的方法约束（来自 master 上的教训）：
+
+- 汇编先离线验证：生成的 trampoline 必须反汇编核对指令序列与补丁偏移，再上机
+- AP 启动语义逐项对齐 brxLimine：GDT 选择子（0x18/0x20 = 32 位、0x28/0x30 = 64 位、
+  0x38 = TSS）与 `ltr`；`IA32_APIC_BASE` 同步（bit11 置、bit8 清）；MTRR 恢复按 SDM
+  MemTypeSet 规程（defType 是 MSR 0x2FF，fixed MTRR 共 11 个）；LAPIC handoff（SVR = 0x1ff、
+  TPR = 0、屏蔽可屏蔽投递模式的 LVT）；`iretq` 进入内核并清零全部 GPR
+- 请求字段必须读：带字段的请求只有 `SmpRequest.flags`、`StackSizeRequest.stack_size`、
+  `PagingModeRequest.flags`
+- Rust 代码在 AP 上必须先置 `CR4.OSFXSR`（Rust 默认使用 SSE2；brxLimine 用 `-mno-sse` 回避）
+
+master 上已定位但未解决的最后一步：内核在 BSP 第一次进入 PID 1 用户态时三重故障（无异常
+横幅），与 AP 无关（单核模式同样复现）。
+
