@@ -769,3 +769,32 @@ M2C: mount ok
   且不再需要 brxLimine fork 产物；
 - `tools_build/util.py::err()` 只打印不退出，且写 stderr；本次排查中出现过「exit=1 但
   日志无任何错误行」的现象（疑似 stderr 编码/缓冲），建议后续给它加 flush 与明确退出码。
+
+### M14 后续：liftoff 引导下 OS 的「最后一公里」状态（未解决，接续点）
+
+**已修**：内核 `cpu::enable_features()` 现在为每个 CPU 补齐 `CR4.OSFXSR/OSXMMEXCPT/PGE`
+（kernel 56dd1af）——此前 liftoff 的 AP trampoline 只置 PAE（AP CR4=0x20），AP 的
+FPU/SSE 探测触发 #UD 并无限重试（30+ 次「CPU EXCEPTION」风暴），PID 1 永远轮不上。
+brxLimine 的 trampoline 恰好置好了这些位，所以缺陷只在 liftoff 链路暴露。
+
+**当前卡点（有实测证据）**：CR4 修复后异常风暴消失，但 init `spawned pid=1` 之后
+**系统画面冻结**（QEMU monitor screendump 连续 6 张、60 秒内逐字节一致）、串口
+无后续输出、AP 全部 idle —— init 进程没有被真正执行。疑似卡在首次切入用户态
+（sysret/iret 到 ring 3）或 init 的第一个 syscall。
+
+**重要教训（采集缺陷）**：QEMU 的 -serial file/tcp/stdio 在本环境都会丢/截数据
+（file 缓冲截断在 939B/11K/12K 等 chunk 边界；tcp 会中途 reset）。-serial stdio
+（用户终端直看）是唯一可靠的通道。已用 monitor screendump 抓帧缓冲做无串口观测
+（_shot_probe.py，60 秒画面零变化 = 冻结实锤）。
+
+**下一步排查方向**（按优先级）：
+
+1. 对比 BIOS/brxLimine 与 liftoff 两条链路在 spawned pid=1 之后的内核状态：
+   monitor info registers（逐 CPU）看 RIP/CR3 —— 是否还在内核 idle、还是已经
+   sysret 到 0x400000；
+2. 检查 init 的用户页表映射来源：两条链路的 memmap 条目数不同（实测 26 vs 28）、
+   HHDM 一致但 pmm 的 usable regions 划分可能不同，用户空间分配是否踩了
+   引导器遗留页（liftoff 的 ESP 页/参数页在 memmap 里的类型）；
+3. 给 scheduler::start/首次 sysret 加临时串口标记，二分定位卡在哪一步。
+
+（本轮结论：liftoff 引导器侧完整可用；OS 侧卡在用户态首切，未解决。）
