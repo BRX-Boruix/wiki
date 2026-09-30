@@ -716,3 +716,56 @@ partition lba=2048 (EXT2)          ← 内核接受自建盘为读写安装根
 
 离线侧同时用 `tools/extverify.py` 逐字节核对 `/boot/kernel`（8,957,688 B，走二级间接），
 `OK /boot/kernel size=8957688 sum16=0xc225`。
+## M14：liftoff 接入 tools（`--liftoff`）与 PID 1 实证
+
+### 定位：两层验收，各管一段
+
+| 层 | 位置 | 管什么 |
+| --- | --- | --- |
+| **引导器单元级夹具** | liftoff 仓库 `tools/boottest.ps1`（17 变体） | 引导器自身行为：M2a 文件读、M2b ISO9660、M2c EXT2、M3 ELF 契约、模块、AP、x2APIC 等；由 `mkiso/mkext2/mksysdisk/elf_oracle/modtest_oracle` 确定性夹具驱动 |
+| **端到端验收** | **tools 仓库 `checks/liftoff/l1_boot_check.py`** | 项目规范流程产出的介质 + 真实用户态：OVMF → ESP 里的 liftoff → 介质上的 `/boot/kernel` → 内核 → **PID 1** |
+
+以后新增的 liftoff 验收一律进 tools（唯一真值），liftoff 仓库只保留引导器单元级夹具。
+
+### `--liftoff`：把「BIOS + brxLimine」换成「UEFI + liftoff」
+
+- `tools_build/liftoff.py`：`build_efi()` / `stage_esp()` / `ensure_ready()` /
+  `ovmf_firmware()` / `uefi_args()` / `qemu_exe()`；
+- `main.py`：`build` / `run` / `br` 各加 `--liftoff`，与既有开关**正交**——
+  `br --systemdisk --redisk --serial --release --liftoff` 等组合均可解析；
+- `build.py`：`_make_iso` / `_make_system_disk` 增加 `liftoff_only`，**跳过全部
+  BIOS 专属步骤**（brxLimine fork 产物拷贝、El Torito `-b` 引导项、isohybrid MBR、
+  EXT2 上的 BIOS 引导码安装）。理由：liftoff 走 UEFI，读的是文件系统里的文件，
+  与 BIOS 引导码无关 → 该链路不再依赖 i686-elf 交叉工具链；
+- `run.py`：`--liftoff` 追加 OVMF pflash + ESP，`-boot order=c`；该模式不传
+  `-cpu max`（该 CPU 模型会在内核侧触发与 liftoff 无关的 panic，M12 实测）。
+
+### 实证：liftoff 引导下 PID 1 真的起来了
+
+`python main.py run --systemdisk --serial --liftoff` → 规范系统盘（M9 那张）：
+
+```
+[m2c] mbr disk_id=0x424f5255 partition=1 start_lba=2048
+M2C: mount ok
+[m9] kernel path=/boot/kernel size=24629664
+[boot] install mode detected: boot disk mbr_disk_id=0x424f5255 partition_index=1
+[boot] install mode root = 'ata0' partition lba=2048 (EXT2), /programs = pool directory
+[kmain] booting user init (PID 1) ...
+[kmain] init: loaded 54096 bytes of init.elf from /programs
+[kmain] init: entry=0x400000 stack_top=0x7ffefffffff0
+[kmain] init: spawned pid=1 from init.elf
+```
+
+验收脚本 `tools/checks/liftoff/l1_boot_check.py --medium systemdisk` 即以此 6 锚
+判定，实测 **LIFTOFF E2E PASS**。注意「看到 `booting user init`」不算数——该行是
+无条件打印；成功分界行是 `init: loaded` 与 `init: spawned pid=1`。
+
+### 边界
+
+- **ISO 链**（`--liftoff` 的 liveCD 介质）在本机**无法实测**：ISO 组装依赖
+  `xorriso`，而当前环境没有（`shutil.which` 与 `C:\ffmpeg\bin\xorriso.exe` 皆无）。
+  跳过 BIOS 的改动已完成，装了 xorriso 即可用 `--medium iso` 验收 liveCD 的 `/programs` + init；
+- **systemdisk 链**（纯 Python 组装，`disk.create_system_disk_image`）已实测通过，
+  且不再需要 brxLimine fork 产物；
+- `tools_build/util.py::err()` 只打印不退出，且写 stderr；本次排查中出现过「exit=1 但
+  日志无任何错误行」的现象（疑似 stderr 编码/缓冲），建议后续给它加 flush 与明确退出码。
