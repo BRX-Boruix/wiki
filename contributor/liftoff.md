@@ -888,4 +888,34 @@ rdmsr                  ; 读 AP 当前值，处理 x2APIC/xAPIC 差异
 
 master 上已定位但未解决的最后一步：内核在 BSP 第一次进入 PID 1 用户态时三重故障（无异常
 横幅），与 AP 无关（单核模式同样复现）。
+### gen2 进展：ADR-049 第 1 步（arch 抽象）已完成
+
+分支 `rewrite/gen2`，提交序列 `cfbc674` → `1e56ea5`。工作区成员：`boot`、`protocol/limine`、
+`arch/arch`、`arch/x86_64`、`arch/current`、`mm`、`fs`、`driver`、`loader`、`utils`、`efi`，
+外加 vendored 的 `flanterm_rust`（path 依赖 + `[workspace] exclude`）。
+
+已落地的抽象组件（全部宿主可测）：
+
+- `arch::addr` —— `PhysAddr`/`VirtAddr`/`PhysFrame`/`PAGE_SIZE`/`Alignment`（对齐量以类型级
+  不变量约束，非法对齐量无法构造）；溢出与截断一律返回 `Option`
+- `arch::paging` —— `PageFlags`（语义位）、`MapError`、`validate_range`（各实现共用的单点校验）、
+  `PageTable` trait（`map_range` + 带 SAFETY 契约的 `activate`）
+- `arch::hhdm` —— `DirectMap`（带区间不变量的直接映射，区间外一律 `None`）
+- `arch::platform` —— `Platform` trait（`name`/`halt`/`write_byte`/`disable_interrupts`/
+  `restore_interrupts`）与 `InterruptState`
+
+实现与装配：`x86_64::platform` 实现 `Platform`（`hlt`、COM1 轮询输出、`pushfq`+`cli`/`sti`）；
+`current` 按 feature `impl-x86_64`（默认，目标构建）或 `impl-mock`（宿主测试）选择实现，
+两者互斥且都未启用时 `compile_error!`。宿主测试固定用
+`cargo test --no-default-features --features impl-mock`。
+
+当前测试账目：**23 个宿主单测**（addr 9、paging 5、hhdm 4、platform 2、x86_64 1、mock 2），
+`cargo build --release --target x86_64-unknown-uefi` 零警告。
+
+待办（进入 QEMU 验证之前必须完成）：
+
+- ADR-051 的离线反汇编核对尚无**可复现脚本**：`hlt`/`cli`/`sti` 曾人工核对通过，但 `out`/`in`
+  的核对与脚本化未完成；该脚本应落在 `tools/checks/`（ADR-052 第 3 层）
+- `arch` 的分页与 HHDM 抽象尚无实现接入（`x86_64` 侧尚未实现 `PageTable`）
+
 
