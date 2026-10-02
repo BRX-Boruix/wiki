@@ -25,6 +25,18 @@ The tutorial has two parts:
 - Section 1: installing a compiled driver, without touching a compiler
 - Sections 2 to 5: writing a driver yourself, from its structure to packaging it into the system image
 
+### [Writing your first program](tutorial/write-your-first-program.md)
+
+How to write a program of your own for the system.
+
+A program is a standalone ELF placed on the data disk and executed by the shell; it is not built into
+the system image. The tutorial builds one from scratch and explains the most easily misunderstood
+part: the entry arguments are not POSIX argv.
+
+**Stated up front**: writing a program today still requires obtaining the system's repositories
+locally; the [`sdk`](contributor/sdk.md) toolchain that removes this is still planned. The tutorial
+covers only what works today.
+
 ## Implementation notes per repository
 
 [`contributor/`](contributor/) collects implementation-level content per repository: design tradeoffs,
